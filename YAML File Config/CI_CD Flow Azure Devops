@@ -1,0 +1,148 @@
+🔵 PART 1 – YAML for AZURE DATA FACTORY (ADF)
+Scenario:
+
+Export ARM template from DEV ADF
+
+Validate
+
+Publish artifact
+
+Deploy to TEST / PROD
+
+ADF – BUILD PIPELINE (Create ARM Artifact)
+trigger:
+- main
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  adfName: 'MyDevADF'
+  resourceGroup: 'ADF-DEV-RG'
+  location: 'AustraliaEast'
+
+steps:
+
+- task: AzureResourceManagerTemplateDeployment@3
+  displayName: 'Export ARM Template from DEV ADF'
+  inputs:
+    deploymentScope: 'Resource Group'
+    azureResourceManagerConnection: 'Azure-DEV-ServiceConnection'
+    action: 'Create Or Update Resource Group'
+    resourceGroupName: '$(resourceGroup)'
+    location: '$(location)'
+    templateLocation: 'Linked artifact'
+    csmFile: 'adf_publish/ARMTemplateForFactory.json'
+    csmParametersFile: 'adf_publish/ARMTemplateParametersForFactory.json'
+
+- task: PublishBuildArtifacts@1
+  inputs:
+    PathtoPublish: 'adf_publish'
+    ArtifactName: 'ADF_ARM_Artifacts'
+
+ADF – RELEASE PIPELINE (Deploy to TEST / PROD)
+Deploy to TEST
+stages:
+
+- stage: DeployToTest
+  jobs:
+  - job: Deploy
+    steps:
+
+    - task: AzureResourceManagerTemplateDeployment@3
+      inputs:
+        deploymentScope: 'Resource Group'
+        azureResourceManagerConnection: 'Azure-TEST-ServiceConnection'
+        resourceGroupName: 'ADF-TEST-RG'
+        location: 'AustraliaEast'
+        templateLocation: 'Linked artifact'
+        csmFile: '$(Pipeline.Workspace)/ADF_ARM_Artifacts/ARMTemplateForFactory.json'
+        csmParametersFile: '$(Pipeline.Workspace)/ADF_ARM_Artifacts/ARMTemplateParametersForFactory.json'
+
+Deploy to PROD (With Approval)
+- stage: DeployToProd
+  dependsOn: DeployToTest
+  jobs:
+  - deployment: DeployProd
+    environment: 'Production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - task: AzureResourceManagerTemplateDeployment@3
+            inputs:
+              azureResourceManagerConnection: 'Azure-PROD-ServiceConnection'
+              resourceGroupName: 'ADF-PROD-RG'
+              location: 'AustraliaEast'
+              templateLocation: 'Linked artifact'
+              csmFile: '$(Pipeline.Workspace)/ADF_ARM_Artifacts/ARMTemplateForFactory.json'
+              csmParametersFile: '$(Pipeline.Workspace)/ADF_ARM_Artifacts/ARMTemplateParametersForFactory.json'
+
+🔵 PART 2 – YAML for POWER AUTOMATE (Only Flows)
+
+Now YAML specifically for:
+
+👉 Deploying Power Automate Flows using Power Platform Build Tools
+BUILD PIPELINE – Export Power Automate Solution
+trigger:
+- main
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  SolutionName: 'AutomationFlows'
+
+steps:
+
+- task: PowerPlatformToolInstaller@2
+
+- task: PowerPlatformExportSolution@2
+  inputs:
+    authenticationType: 'PowerPlatformSPN'
+    PowerPlatformSPN: 'PowerPlatform-DEV-Connection'
+    SolutionName: '$(SolutionName)'
+    SolutionOutputFile: '$(Build.ArtifactStagingDirectory)/$(SolutionName).zip'
+
+- task: PublishBuildArtifacts@1
+  inputs:
+    PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+    ArtifactName: 'PowerAutomateArtifact'
+
+RELEASE PIPELINE – Deploy Flows to TEST
+stages:
+
+- stage: DeployToTest
+  jobs:
+  - job: Deploy
+    steps:
+
+    - task: PowerPlatformToolInstaller@2
+
+    - task: PowerPlatformImportSolution@2
+      inputs:
+        authenticationType: 'PowerPlatformSPN'
+        PowerPlatformSPN: 'PowerPlatform-TEST-Connection'
+        SolutionInputFile: '$(Pipeline.Workspace)/PowerAutomateArtifact/AutomationFlows.zip'
+        PublishChanges: true
+
+RELEASE PIPELINE – Deploy Flows to PROD
+- stage: DeployToProd
+  dependsOn: DeployToTest
+  jobs:
+  - deployment: DeployProd
+    environment: 'Production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - task: PowerPlatformToolInstaller@2
+
+          - task: PowerPlatformImportSolution@2
+            inputs:
+              authenticationType: 'PowerPlatformSPN'
+              PowerPlatformSPN: 'PowerPlatform-PROD-Connection'
+              SolutionInputFile: '$(Pipeline.Workspace)/PowerAutomateArtifact/AutomationFlows.zip'
+              PublishChanges: true
